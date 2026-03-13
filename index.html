@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>終極大富翁 - 黑市犯罪版</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+    import { getFirestore, doc, setDoc, updateDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+    
+    window.fbInit = { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, updateDoc, onSnapshot };
+  </script>
+
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    .hide-scrollbar::-webkit-scrollbar { display: none; }
+    .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    @keyframes bounce-subtle { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+    .player-token { animation: bounce-subtle 1.5s infinite; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5)); transition: all 0.2s ease-in-out; }
+    .boss-token { animation: bounce-subtle 0.8s infinite; filter: drop-shadow(0 4px 6px rgba(220,38,38,0.6)); font-size: 1.5rem; }
+    .bg-stripes { background-image: linear-gradient(45deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent); background-size: 1rem 1rem; }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-900 selection:bg-blue-200">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, setDoc, updateDoc, onSnapshot } = window.fbInit;
+
+    // 更新為您提供的 Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyDFhHbkIGkqPAmXRW2vQ0s-H33qVO2cCKg",
+      authDomain: "money-5ff30.firebaseapp.com",
+      projectId: "money-5ff30",
+      storageBucket: "money-5ff30.firebasestorage.app",
+      messagingSenderId: "392383048631",
+      appId: "1:392383048631:web:ceff00d5e93e2ebc6e5632",
+      measurementId: "G-RWXNKP0H6D"
+    };
+    
+    let app, auth, db, fbInitError = '';
+    try { app = initializeApp(firebaseConfig); auth = getAuth(app); db = getFirestore(app); } 
+    catch(e) { fbInitError = e.message; console.error(e); }
+    const appId = 'monopoly-chaos-web';
+
+    const PLAYER_COLORS = ['#EF4444', '#3B82F6', '#10B981', '#EAB308', '#A855F7', '#F97316'];
+    const AVATARS = ['🐕', '🚗', '🎩', '🚢', '👟', '🦖', '🐧', '🚀'];
+    const TALENTS = [
+      { id: 'builder', name: '🏗️ 建築師', desc: '建造房屋成本減少 20%' },
+      { id: 'runner', name: '🏃 飛毛腿', desc: '擲骰子必定 +1' },
+      { id: 'rich', name: '💰 富二代', desc: '開局額外獲得 $1000' },
+      { id: 'investor', name: '📈 投資客', desc: '開局獲得 15 股股票' }
+    ];
+    
+    const WORLD_EVENTS = [
+      { id: 'normal', name: '☀️ 風平浪靜', desc: '一切正常運作', effect: null },
+      { id: 'boom', name: '🚀 經濟繁榮', desc: '所有租金收益增加 50%', effect: { rentMult: 1.5 } },
+      { id: 'recession', name: '📉 經濟衰退', desc: '所有租金收益減少 50%', effect: { rentMult: 0.5 } },
+      { id: 'tech_bubble', name: '💻 科技狂熱', desc: '科技股票價格暴漲', effect: { stockBoost: 'tech' } }
+    ];
+
+    const BOARD_SPACES = [
+      { id: 0, name: '起點', type: 'go', description: '經過收集 $200 + 股票分紅' },
+      { id: 1, name: '地中海大道', type: 'property', color: 'brown', price: 60, houseCost: 50, rent: [2, 10, 30, 90, 160, 250] },
+      { id: 2, name: '社區基金', type: 'community' },
+      { id: 3, name: '波羅的海大道', type: 'property', color: 'brown', price: 60, houseCost: 50, rent: [4, 20, 60, 180, 320, 450] },
+      { id: 4, name: '所得稅', type: 'tax', amount: 200 },
+      { id: 5, name: '雷丁鐵路', type: 'railroad', price: 200 },
+      { id: 6, name: '東方大道', type: 'property', color: 'lightblue', price: 100, houseCost: 50, rent: [6, 30, 90, 270, 400, 550] },
+      { id: 7, name: '機會', type: 'chance' },
+      { id: 8, name: '佛蒙特大道', type: 'property', color: 'lightblue', price: 100, houseCost: 50, rent: [6, 30, 90, 270, 400, 550] },
+      { id: 9, name: '康乃狄克大道', type: 'property', color: 'lightblue', price: 120, houseCost: 50, rent: [8, 40, 100, 300, 450, 600] },
+      { id: 10, name: '監獄/探監', type: 'jail' },
+      { id: 11, name: '聖查爾斯廣場', type: 'property', color: 'pink', price: 140, houseCost: 100, rent: [10, 50, 150, 450, 625, 750] },
+      { id: 12, name: '電力公司', type: 'utility', price: 150 },
+      { id: 13, name: '政治家大道', type: 'property', color: 'pink', price: 140, houseCost: 100, rent: [10, 50, 150, 450, 625, 750] },
+      { id: 14, name: '維吉尼亞大道', type: 'property', color: 'pink', price: 160, houseCost: 100, rent: [12, 60, 180, 500, 700, 900] },
+      { id: 15, name: '賓州鐵路', type: 'railroad', price: 200 },
+      { id: 16, name: '聖詹姆斯廣場', type: 'property', color: 'orange', price: 180, houseCost: 100, rent: [14, 70, 200, 550, 750, 950] },
+      { id: 17, name: '社區基金', type: 'community' },
+      { id: 18, name: '田納西大道', type: 'property', color: 'orange', price: 180, houseCost: 100, rent: [14, 70, 200, 550, 750, 950] },
+      { id: 19, name: '紐約大道', type: 'property', color: 'orange', price: 200, houseCost: 100, rent: [16, 80, 220, 600, 800, 1000] },
+      { id: 20, name: '免費停車', type: 'parking' },
+      { id: 21, name: '肯塔基大道', type: 'property', color: 'red', price: 220, houseCost: 150, rent: [18, 90, 250, 700, 875, 1050] },
+      { id: 22, name: '機會', type: 'chance' },
+      { id: 23, name: '印第安納大道', type: 'property', color: 'red', price: 220, houseCost: 150, rent: [18, 90, 250, 700, 875, 1050] },
+      { id: 24, name: '伊利諾伊大道', type: 'property', color: 'red', price: 240, houseCost: 150, rent: [20, 100, 300, 750, 925, 1100] },
+      { id: 25, name: 'B&O 鐵路', type: 'railroad', price: 200 },
+      { id: 26, name: '大西洋大道', type: 'property', color: 'yellow', price: 260, houseCost: 150, rent: [22, 110, 330, 800, 975, 1150] },
+      { id: 27, name: '文特諾大道', type: 'property', color: 'yellow', price: 260, houseCost: 150, rent: [22, 110, 330, 800, 975, 1150] },
+      { id: 28, name: '自來水廠', type: 'utility', price: 150 },
+      { id: 29, name: '馬文花園', type: 'property', color: 'yellow', price: 280, houseCost: 150, rent: [24, 120, 360, 850, 1025, 1200] },
+      { id: 30, name: '直接入獄', type: 'gotojail' },
+      { id: 31, name: '太平洋大道', type: 'property', color: 'green', price: 300, houseCost: 200, rent: [26, 130, 390, 900, 1100, 1275] },
+      { id: 32, name: '北卡羅萊納大道', type: 'property', color: 'green', price: 300, houseCost: 200, rent: [26, 130, 390, 900, 1100, 1275] },
+      { id: 33, name: '社區基金', type: 'community' },
+      { id: 34, name: '賓夕法尼亞大道', type: 'property', color: 'green', price: 320, houseCost: 200, rent: [28, 150, 450, 1000, 1200, 1400] },
+      { id: 35, name: '短線鐵路', type: 'railroad', price: 200 },
+      { id: 36, name: '機會', type: 'chance' },
+      { id: 37, name: '公園廣場', type: 'property', color: 'blue', price: 350, houseCost: 200, rent: [35, 175, 500, 1100, 1300, 1500] },
+      { id: 38, name: '奢侈稅', type: 'tax', amount: 100 },
+      { id: 39, name: '木板路', type: 'property', color: 'blue', price: 400, houseCost: 200, rent: [50, 200, 600, 1400, 1700, 2000] },
+    ];
+
+    const COLOR_MAP = { brown: '#8B4513', lightblue: '#87CEFA', pink: '#FF69B4', orange: '#FFA500', red: '#EF4444', yellow: '#EAB308', green: '#10B981', blue: '#3B82F6' };
+    const HEX_TO_RGBA = (hex, alpha) => {
+       if(!hex) return 'transparent';
+       const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    };
+
+    const DEFAULT_GAME_STATE = {
+      status: 'lobby', players: [], turnIndex: 0, properties: {}, phase: 'waiting_roll', pendingAction: null, dice: [1, 1],
+      chat: [], roundCount: 1, turnStartTime: Date.now(),
+      stocks: { prices: { tech: 100, realEstate: 100 }, history: { tech: [100], realEstate: [100] } },
+      auction: { active: false, spaceId: null, currentBid: 0, highestBidder: null, endTime: 0 },
+      worldEvent: WORLD_EVENTS[0],
+      lottery: { pot: 1000, tickets: [], roundsLeft: 3 },
+      boss: { active: true, name: '貪婪惡龍', avatar: '🐉', hp: 5000, maxHp: 5000, position: 20, level: 1 }
+    };
+
+    const appendLog = (currentChat, text) => {
+        const newChat = [...(currentChat || [])];
+        newChat.push({ id: Date.now() + Math.random(), sender: '系統', text, isSystem: true });
+        return newChat.slice(-50);
+    };
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [roomId, setRoomId] = useState('');
+      const [inputRoomCode, setInputRoomCode] = useState('');
+      const [gameState, setGameState] = useState(null);
+      const [playerName, setPlayerName] = useState('');
+      const [playerAvatar, setPlayerAvatar] = useState(AVATARS[0]);
+      const [selectedTalent, setSelectedTalent] = useState(TALENTS[0].id);
+      
+      const [showExpansionModal, setShowExpansionModal] = useState(false);
+      const [expansionTab, setExpansionTab] = useState('stock'); 
+      const [selectedSpaceId, setSelectedSpaceId] = useState(null);
+      const [modalConfig, setModalConfig] = useState({ show: false, msg: '', customRender: null });
+      const [timeLeft, setTimeLeft] = useState(60);
+      
+      // 視覺位置狀態 (用於動畫)
+      const [visualPos, setVisualPos] = useState({});
+
+      const chatEndRef = useRef(null);
+
+      const showAlert = (msg) => setModalConfig({ show: true, msg });
+      const closeModal = () => setModalConfig({ show: false, msg: '', customRender: null });
+
+      useEffect(() => {
+        const initAuth = async () => {
+          try { await signInAnonymously(auth); } 
+          catch (error) { console.error(error); }
+        };
+        initAuth();
+        const unsub = onAuthStateChanged(auth, setUser);
+        return () => unsub();
+      }, []);
+
+      useEffect(() => {
+        if (!user || !roomId || !db) return;
+        const roomRef = doc(db, 'artifacts', appId, 'public', 'data', 'rooms', `monopoly_chaos_${roomId}`);
+        const unsub = onSnapshot(roomRef, snap => { 
+           if (snap.exists()) setGameState(snap.data()); 
+           else setDoc(roomRef, DEFAULT_GAME_STATE).catch(console.error);
+        }, console.error);
+        return () => unsub();
+      }, [user, roomId]);
+
+      // 棋子移動動畫邏輯
+      useEffect(() => {
+         if (!gameState) return;
+         const newVis = { ...visualPos };
+         let changed = false;
+         
+         gameState.players.forEach(p => {
+            if (newVis[p.id] === undefined) {
+               newVis[p.id] = p.position;
+               changed = true;
+            } else if (newVis[p.id] !== p.position) {
+               // 如果在監獄且視覺位置不是 10，直接跳過去 (被抓)
+               if (p.inJail && newVis[p.id] !== 10 && p.position === 10) {
+                  newVis[p.id] = 10;
+                  changed = true;
+               } else {
+                  // 否則一步一步走
+                  setTimeout(() => {
+                     setVisualPos(prev => ({...prev, [p.id]: (prev[p.id] + 1) % 40}));
+                  }, 150);
+               }
+            }
+         });
+         if (changed) setVisualPos(newVis);
+      }, [gameState, visualPos]);
+
+      useEffect(() => { chatEndRef.current?.scrollIntoView(); }, [gameState?.chat]);
+
+      useEffect(() => {
+         const interval = setInterval(() => {
+            if (!gameState || gameState.status !== 'playing') return;
+            const now = Date.now();
+            if (gameState.auction?.active) {
+               const t = Math.max(0, Math.floor((gameState.auction.endTime - now)/1000));
+               setTimeLeft(t);
+               if (t === 0 && user?.uid === gameState.players[gameState.turnIndex]?.id) resolveAuction();
+            } else {
+               const t = Math.max(0, Math.floor(60 - (now - gameState.turnStartTime)/1000));
+               setTimeLeft(t);
+               if (t === 0 && gameState.players[gameState.turnIndex]?.id === user?.uid) forceEndTurn();
+            }
+         }, 1000);
+         return () => clearInterval(interval);
+      }, [gameState, user]);
+
+      const updateGame = async (updates) => {
+        if (!user || !roomId) return;
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'rooms', `monopoly_chaos_${roomId}`), updates).catch(console.error);
+      };
+
+      const joinGameSlot = async () => {
+        if (gameState.players.find(p => p.id === user.uid) || gameState.players.length >= 6) return;
+        const newPlayer = {
+          id: user.uid, name: playerName.trim(), color: PLAYER_COLORS[gameState.players.length], avatar: playerAvatar,
+          money: selectedTalent==='rich' ? 2500 : 1500, position: 0, inJail: false, jailTurns: 0, isBankrupt: false,
+          stocksOwned: { tech: selectedTalent==='investor'?15:0, realEstate: 0 }, items: { remoteDice: 0, turtle: 0, shield: 0 },
+          talent: selectedTalent, achievements: [], debt: 0, pet: null, statusEffects: {}
+        };
+        await updateGame({ players: [...gameState.players, newPlayer], chat: appendLog(gameState.chat, `👋 ${newPlayer.name} 加入了遊戲！`) });
+      };
+
+      const passTurnToNext = (state) => {
+        let nextChat = [...(state.chat || [])];
+        const log = (txt) => { nextChat = appendLog(nextChat, txt); };
+
+        let nextIdx = (state.turnIndex + 1) % state.players.length;
+        let p = state.players[nextIdx];
+        while (p && p.isBankrupt && state.players.filter(x=>!x.isBankrupt).length > 1) {
+          nextIdx = (nextIdx + 1) % state.players.length; p = state.players[nextIdx];
+        }
+        let updates = { turnIndex: nextIdx, phase: 'waiting_roll', pendingAction: null, turnStartTime: Date.now() };
+        let newRound = nextIdx <= state.turnIndex || state.players.filter(x=>!x.isBankrupt).length <= 1;
+        if(state.players.length === 1) newRound = true;
+
+        if (newRound) {
+           updates.roundCount = state.roundCount + 1;
+           let pUpdates = [...state.players];
+           
+           let lotteryUpdate = { ...state.lottery, roundsLeft: state.lottery.roundsLeft - 1 };
+           if (lotteryUpdate.roundsLeft <= 0) {
+              if (lotteryUpdate.tickets.length > 0) {
+                 const winnerId = lotteryUpdate.tickets[Math.floor(Math.random()*lotteryUpdate.tickets.length)];
+                 const wIdx = pUpdates.findIndex(x=>x.id===winnerId);
+                 if(wIdx !== -1) {
+                    pUpdates[wIdx].money += lotteryUpdate.pot;
+                    log(`🎟️ 國家樂透開獎！恭喜 ${pUpdates[wIdx].name} 獨得 $${lotteryUpdate.pot} 大獎！`);
+                 }
+              } else {
+                 log(`🎟️ 國家樂透開獎！本期無人購買，獎金將繼續累積！`);
+              }
+              lotteryUpdate = { pot: 1000, tickets: [], roundsLeft: 3 };
+           }
+
+           pUpdates.forEach(px => { 
+              if(px.statusEffects?.turtleTurns > 0) px.statusEffects.turtleTurns--; 
+              if(px.debt > 0) px.debt = Math.floor(px.debt * 1.05); 
+           });
+           updates.players = pUpdates;
+           updates.lottery = lotteryUpdate;
+
+           let tPrice = state.stocks.prices.tech, rPrice = state.stocks.prices.realEstate;
+           let tBoost = state.worldEvent.effect?.stockBoost === 'tech' ? 50 : 0;
+           tPrice = Math.max(10, tPrice + Math.floor(Math.random()*41)-20 + tBoost);
+           rPrice = Math.max(10, rPrice + Math.floor(Math.random()*41)-20);
+           updates.stocks = { prices: { tech: tPrice, realEstate: rPrice }, history: { tech: [...state.stocks.history.tech, tPrice].slice(-10), realEstate: [...state.stocks.history.realEstate, rPrice].slice(-10) } };
+           
+           const tDiff = tPrice - state.stocks.prices.tech;
+           const rDiff = rPrice - state.stocks.prices.realEstate;
+           log(`📈 股市結算：科技股 ${tDiff>=0?'▲':'▼'}$${Math.abs(tDiff)} | 地產股 ${rDiff>=0?'▲':'▼'}$${Math.abs(rDiff)}`);
+
+           if (updates.roundCount % 4 === 0) {
+              updates.worldEvent = WORLD_EVENTS[Math.floor(Math.random() * WORLD_EVENTS.length)];
+              log(`🌍 世界事件更新：${updates.worldEvent.name} - ${updates.worldEvent.desc}`);
+           }
+        }
+        updates.chat = nextChat;
+        return updates;
+      };
+
+      const forceEndTurn = async () => { await updateGame(passTurnToNext(gameState)); };
+
+      const calculateRent = (space, propData, payer, owner, diceSum) => {
+        if(propData.isMortgaged || payer.id === owner.id) return 0;
+        let rent = 0;
+        if(space.type === 'property') {
+           rent = space.rent[propData.isLandmark ? 5 : (propData.houses || 0)];
+           const colorSpaces = BOARD_SPACES.filter(s => s.color === space.color);
+           const isMonopoly = colorSpaces.every(s => gameState.properties[s.id]?.ownerId === owner.id);
+           if (isMonopoly && !propData.isLandmark && propData.houses === 0) rent *= 2;
+           else if (isMonopoly) rent = Math.floor(rent * 1.5); 
+        }
+        else if(space.type === 'railroad') rent = 25 * Math.pow(2, Object.values(gameState.properties).filter(p => p.ownerId === owner.id && BOARD_SPACES[p.id]?.type === 'railroad').length - 1);
+        else if(space.type === 'utility') rent = (Object.values(gameState.properties).filter(p => p.ownerId === owner.id && BOARD_SPACES[p.id]?.type === 'utility').length === 2 ? 10 : 4) * diceSum;
+        
+        if(propData.isLandmark) rent *= 2;
+        if(gameState.worldEvent.effect?.rentMult) rent = Math.floor(rent * gameState.worldEvent.effect.rentMult);
+        return rent;
+      };
+
+      const executeRoll = async (d1, d2) => {
+        let pIndex = gameState.turnIndex; let pUpdates = [...gameState.players]; let p = { ...pUpdates[pIndex] };
+        let stateUpdates = { dice: [d1, d2] };
+        let currentChat = [...gameState.chat];
+        const log = (txt) => { currentChat = appendLog(currentChat, txt); };
+
+        if (p.talent === 'runner') { d1++; d2++; }
+        if (p.statusEffects?.nextRoll) p.statusEffects.nextRoll = null;
+
+        if (p.inJail) {
+          if (d1 === d2) { 
+             p.inJail = false; p.jailTurns = 0; 
+             log(`🎲 ${p.name} 擲出雙骰，成功逃出監獄！`);
+          } else { 
+             p.jailTurns++; 
+             if(p.jailTurns >= 3) { 
+                p.money -= 50; p.inJail = false; p.jailTurns = 0; 
+                log(`💸 ${p.name} 刑滿釋放，支付 $50 出獄！`);
+             } else { 
+                log(`🔒 ${p.name} 擲骰失敗，繼續坐牢 (${p.jailTurns}/3 輪)`);
+                stateUpdates.chat = currentChat;
+                pUpdates[pIndex] = p; 
+                await updateGame({ ...stateUpdates, ...passTurnToNext({ ...gameState, players: pUpdates, chat: currentChat }), players: pUpdates }); 
+                return; 
+             } 
+          }
+        }
+
+        const oldPos = p.position; p.position = (oldPos + d1 + d2) % 40;
+        
+        if (p.position < oldPos && p.position !== 10) {
+           let bonus = 200;
+           let logText = `🏁 ${p.name} 經過起點，獲得基本獎金 $200`;
+           if (p.pet === 'dog') { bonus += 300; logText += ' + 招財犬 $300'; }
+           const div = (p.stocksOwned.tech + p.stocksOwned.realEstate) * 2;
+           if (div > 0) { bonus += div; logText += ` + 股票分紅 $${div}`; }
+           p.money += bonus;
+           log(logText + '！');
+        }
+
+        const space = BOARD_SPACES[p.position];
+        stateUpdates.phase = 'must_action';
+
+        if (gameState.boss?.active && p.position === gameState.boss.position) {
+           stateUpdates.pendingAction = { type: 'boss_encounter' };
+        }
+        else if (['property', 'railroad', 'utility'].includes(space.type)) {
+          const propData = gameState.properties[space.id];
+          if (!propData || !propData.ownerId) {
+             stateUpdates.pendingAction = { type: 'buy', spaceId: space.id, amount: space.price };
+          } else if (propData.ownerId !== p.id) {
+            const ownerPlayer = gameState.players.find(x => x.id === propData.ownerId);
+            const rent = calculateRent(space, propData, p, ownerPlayer, d1+d2);
+            if (rent > 0) {
+               stateUpdates.pendingAction = { type: 'rent', to: propData.ownerId, amount: rent, spaceId: space.id };
+            } else stateUpdates.phase = 'end_turn';
+          } else stateUpdates.phase = 'end_turn';
+        } else if (space.type === 'tax') stateUpdates.pendingAction = { type: 'tax', amount: space.amount };
+        else if (space.type === 'gotojail') { 
+           p.position = 10; p.inJail = true; 
+           log(`👮 ${p.name} 被抓進監獄了！`);
+           stateUpdates.chat = currentChat;
+           stateUpdates = { ...stateUpdates, ...passTurnToNext({ ...gameState, players: pUpdates, chat: currentChat }) }; 
+        }
+        else stateUpdates.phase = 'end_turn';
+
+        stateUpdates.chat = currentChat;
+        pUpdates[pIndex] = p; await updateGame({ ...stateUpdates, players: pUpdates });
+      };
+
+      const rollDice = () => {
+        let p = gameState.players[gameState.turnIndex];
+        if (p.statusEffects?.nextRoll) executeRoll(Math.floor(p.statusEffects.nextRoll/2), Math.ceil(p.statusEffects.nextRoll/2));
+        else if (p.statusEffects?.turtleTurns > 0) executeRoll(1, 0);
+        else executeRoll(Math.floor(Math.random()*6)+1, Math.floor(Math.random()*6)+1);
+      };
+
+      const buyProperty = async () => {
+        const { spaceId, amount } = gameState.pendingAction; let pUpdates = [...gameState.players]; let p = pUpdates[gameState.turnIndex];
+        if (p.money < amount) return showAlert("資金不足！");
+        p.money -= amount;
+        let newChat = appendLog(gameState.chat, `🏠 ${p.name} 購買了 ${BOARD_SPACES[spaceId].name}！`);
+        await updateGame({ players: pUpdates, properties: { ...gameState.properties, [spaceId]: { ownerId: p.id, houses: 0, isLandmark: false } }, phase: 'end_turn', pendingAction: null, chat: newChat });
+      };
+
+      const startAuction = async () => {
+         const { spaceId } = gameState.pendingAction;
+         await updateGame({ phase: 'auction', pendingAction: null, auction: { active: true, spaceId, currentBid: 10, highestBidder: null, endTime: Date.now() + 15000 } });
+      };
+      const bidAuction = async (amount) => {
+         if (gameState.auction.endTime < Date.now()) return;
+         let p = gameState.players.find(x=>x.id===user.uid);
+         if (p.money < gameState.auction.currentBid + amount) return showAlert("資金不足");
+         await updateGame({ auction: { ...gameState.auction, currentBid: gameState.auction.currentBid + amount, highestBidder: user.uid, endTime: Math.max(gameState.auction.endTime, Date.now() + 5000) } });
+      };
+      const resolveAuction = async () => {
+         let updates = { auction: { active: false, spaceId: null }, phase: 'end_turn' };
+         let newChat = [...gameState.chat];
+         if (gameState.auction.highestBidder) {
+            let pUpdates = [...gameState.players];
+            let winner = pUpdates.find(x=>x.id===gameState.auction.highestBidder);
+            winner.money -= gameState.auction.currentBid;
+            updates.players = pUpdates;
+            updates.properties = { ...gameState.properties, [gameState.auction.spaceId]: { ownerId: winner.id, houses: 0, isLandmark: false } };
+            newChat = appendLog(newChat, `🔨 ${winner.name} 以 $${gameState.auction.currentBid} 成功標下 ${BOARD_SPACES[gameState.auction.spaceId].name}！`);
+         }
+         updates.chat = newChat;
+         await updateGame(updates);
+      };
+
+      const payRentOrTax = async () => {
+        const { amount, to, type, spaceId } = gameState.pendingAction; let pUpdates = [...gameState.players]; let p1 = pUpdates[gameState.turnIndex];
+        if (p1.money < amount) return showAlert("資金不足！請考慮貸款或破產！");
+        p1.money -= amount; 
+        let newChat = [...gameState.chat];
+        if (type === 'rent') { 
+           let p2 = pUpdates.find(x=>x.id===to); p2.money += amount; 
+           newChat = appendLog(newChat, `💸 ${p1.name} 踩到 ${p2.name} 的「${BOARD_SPACES[spaceId].name}」，支付了 $${amount} 租金！`);
+        } else if (type === 'tax') {
+           newChat = appendLog(newChat, `🏛️ ${p1.name} 依法繳交了 $${amount} 的稅金！`);
+        }
+        await updateGame({ players: pUpdates, phase: 'end_turn', pendingAction: null, chat: newChat });
+      };
+
+      const useShield = async () => {
+         let pUpdates = [...gameState.players]; let p1 = pUpdates[gameState.turnIndex];
+         if ((p1.items?.shield || 0) <= 0) return;
+         p1.items.shield -= 1;
+         let newChat = appendLog(gameState.chat, `🛡️ ${p1.name} 使用了「免租護盾」，成功抵擋了 $${gameState.pendingAction.amount} 的天價租金！`);
+         await updateGame({ players: pUpdates, phase: 'end_turn', pendingAction: null, chat: newChat });
+      };
+
+      const attackBoss = async () => {
+         let pUpdates = [...gameState.players]; let p = pUpdates[gameState.turnIndex];
+         if (p.money < 100) return showAlert("資金不足以攻擊");
+         p.money -= 100;
+         let dmg = (Math.floor(Math.random()*6)+1) * 300;
+         let newBoss = { ...gameState.boss, hp: gameState.boss.hp - dmg };
+         let newChat = [...gameState.chat];
+         
+         if (newBoss.hp <= 0) {
+            let bounty = newBoss.level * 2000;
+            p.money += bounty;
+            let nextPos = Math.floor(Math.random() * 40);
+            newBoss = { active: true, name: '貪婪惡龍', avatar: '🐉', hp: newBoss.maxHp + 2000, maxHp: newBoss.maxHp + 2000, position: nextPos, level: newBoss.level + 1 };
+            newChat = appendLog(newChat, `🎉 ${p.name} 擊敗了 Boss！造成 ${dmg} 傷害，獲得賞金 $${bounty}！`);
+            newChat = appendLog(newChat, `🐲 貪婪惡龍 Lv.${newBoss.level} 重生並飛到了「${BOARD_SPACES[nextPos].name}」！`);
+            showAlert(`🎉 擊敗 Boss！造成 ${dmg} 傷害，獲得賞金 $${bounty}！`);
+         } else {
+            newChat = appendLog(newChat, `⚔️ ${p.name} 對 Boss 造成 ${dmg} 傷害！(剩餘 HP: ${newBoss.hp})`);
+            showAlert(`⚔️ 對 Boss 造成 ${dmg} 傷害！`);
+         }
+         await updateGame({ phase: 'end_turn', pendingAction: null, players: pUpdates, boss: newBoss, chat: newChat });
+      };
+
+      const declareBankruptcy = async () => {
+         let pUpdates = [...gameState.players]; let p = pUpdates[gameState.turnIndex]; p.isBankrupt = true;
+         let newProps = { ...gameState.properties };
+         Object.keys(newProps).forEach(k => { if(newProps[k].ownerId === p.id) delete newProps[k]; });
+         let newChat = appendLog(gameState.chat, `🏳️ ${p.name} 宣告破產了！所有資產已釋出。`);
+         await updateGame({ players: pUpdates, properties: newProps, ...passTurnToNext({ ...gameState, players: pUpdates, chat: newChat }) });
+      };
+
+      const PropertyModal = () => {
+         if(!selectedSpaceId && selectedSpaceId !== 0) return null;
+         const space = BOARD_SPACES[selectedSpaceId];
+         const propData = gameState.properties[space.id] || {};
+         const owner = propData.ownerId ? gameState.players.find(x=>x.id===propData.ownerId) : null;
+         const isMine = owner?.id === user.uid;
+         const myPlayerData = gameState.players.find(p => p.id === user.uid);
+         const hCost = myPlayerData?.talent === 'builder' ? Math.floor(space.houseCost * 0.8) : space.houseCost;
+         const isMonopoly = owner && BOARD_SPACES.filter(s => s.color === space.color).every(s => gameState.properties[s.id]?.ownerId === owner.id);
+
+         return (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 backdrop-blur-sm" onClick={()=>setSelectedSpaceId(null)}>
+               <div className={`bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border-4 ${isMonopoly?'border-yellow-400 animate-pulse':'border-transparent'}`} onClick={e=>e.stopPropagation()}>
+                  {space.color && <div className="h-16 flex items-center justify-center text-white text-2xl font-black tracking-widest relative" style={{backgroundColor: COLOR_MAP[space.color]}}>{space.name}{isMonopoly && <span className="absolute top-1 right-2 text-xs bg-yellow-400 text-yellow-900 px-1 rounded">壟斷加成</span>}</div>}
+                  {!space.color && <div className="h-16 bg-gray-200 flex items-center justify-center text-gray-800 text-xl font-bold">{space.name}</div>}
+                  
+                  <div className="p-6">
+                     {space.type === 'property' && (
+                        <div className="space-y-2 mb-6 text-sm text-gray-700">
+                           <div className="flex justify-between font-bold text-black border-b pb-1"><span>空地租金</span><span>${space.rent[0]}</span></div>
+                           <div className="flex justify-between"><span>1 棟房子</span><span>${space.rent[1]}</span></div>
+                           <div className="flex justify-between"><span>2 棟房子</span><span>${space.rent[2]}</span></div>
+                           <div className="flex justify-between"><span>3 棟房子</span><span>${space.rent[3]}</span></div>
+                           <div className="flex justify-between"><span>4 棟房子</span><span>${space.rent[4]}</span></div>
+                           <div className="flex justify-between font-bold text-blue-600 border-t pt-1"><span>奇觀 (Landmark)</span><span>${space.rent[5]*2}</span></div>
+                           <div className="text-center text-xs text-gray-400 mt-2">房屋成本: ${hCost} | 奇觀升級: $2000</div>
+                        </div>
+                     )}
+                     <div className="bg-gray-50 p-3 rounded-lg border text-center mb-4">
+                        <span className="text-gray-500 text-sm">狀態：</span>
+                        {owner ? <span className="font-bold" style={{color:owner.color}}>{owner.name} 的資產 {propData.isLandmark?'(奇觀)':`(房屋:${propData.houses||0})`}</span> : <span className="font-bold text-gray-600">無人擁有 (售價 ${space.price})</span>}
+                     </div>
+                     {isMine && !propData.isLandmark && space.type === 'property' && (
+                        <div className="flex gap-2">
+                           {(propData.houses||0) < 5 ? 
+                              <button onClick={async()=>{ if(myPlayerData.money<hCost)return showAlert("資金不足"); let p=[...gameState.players]; p.find(x=>x.id===user.uid).money-=hCost; await updateGame({players:p, properties:{...gameState.properties,[space.id]:{...propData, houses:(propData.houses||0)+1}}, chat: appendLog(gameState.chat, `🏗️ ${myPlayerData.name} 在「${space.name}」蓋了一棟房子！`) }); }} className="flex-1 bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">建造房屋 (${hCost})</button>
+                            : <button onClick={async()=>{ if(myPlayerData.money<2000)return showAlert("資金不足"); let p=[...gameState.players]; p.find(x=>x.id===user.uid).money-=2000; await updateGame({players:p, properties:{...gameState.properties,[space.id]:{...propData, isLandmark:true}}, chat: appendLog(gameState.chat, `🏰 ${myPlayerData.name} 將「${space.name}」升級成了超級奇觀！`) }); }} className="flex-1 bg-yellow-500 text-white py-2 rounded font-black hover:bg-yellow-600 shadow-lg">升級奇觀 ($2000)</button>}
+                        </div>
+                     )}
+                     <button onClick={()=>setSelectedSpaceId(null)} className="w-full mt-2 bg-gray-200 text-gray-800 py-2 rounded font-bold hover:bg-gray-300">關閉</button>
+                  </div>
+               </div>
+            </div>
+         );
+      };
+
+      const renderExpansionModal = () => {
+         const me = gameState.players.find(p=>p.id===user.uid);
+         if (!me) return null;
+
+         const tradeStock = async (type, amount, isBuy) => {
+            let pUpdates = [...gameState.players]; let p = pUpdates.find(x=>x.id===user.uid);
+            let price = gameState.stocks.prices[type] * amount;
+            if(isBuy) { if(p.money < price) return showAlert("資金不足"); p.money -= price; p.stocksOwned[type] += amount; }
+            else { if(p.stocksOwned[type] < amount) return showAlert("股票不足"); p.money += price; p.stocksOwned[type] -= amount; }
+            await updateGame({ players: pUpdates });
+         };
+
+         const spinCasino = async () => {
+            if(me.money < 100) return showAlert("資金不足以拉霸");
+            let pUpdates = [...gameState.players]; let p = pUpdates.find(x=>x.id===user.uid);
+            p.money -= 100;
+            const roll = Math.random();
+            let win = 0;
+            if(roll < 0.1) win = 1000; else if(roll < 0.3) win = 300; else if(roll < 0.6) win = 100;
+            p.money += win;
+            let newChat = [...gameState.chat];
+            if (win > 0) newChat = appendLog(newChat, `🎰 恭喜 ${p.name} 在皇家拉霸機贏得了 $${win}！`);
+            await updateGame({ players: pUpdates, chat: newChat });
+            showAlert(win > 0 ? `🎰 恭喜中獎！獲得 $${win}` : `💸 沒中獎，下次好運！`);
+         };
+
+         const executeTrade = async (e) => {
+            e.preventDefault();
+            const targetId = e.target.targetId.value;
+            const amount = parseInt(e.target.amount.value) || 0;
+            const propId = e.target.propId.value;
+            if (targetId === me.id) return showAlert("不能跟自己交易");
+            if (amount > me.money) return showAlert("資金不足");
+
+            let pUpdates = [...gameState.players];
+            let pMe = pUpdates.find(x=>x.id===me.id);
+            let pTarget = pUpdates.find(x=>x.id===targetId);
+            let propUpdates = { ...gameState.properties };
+
+            let msg = `🤝 ${pMe.name} 向 ${pTarget.name} `;
+            if(amount > 0) { pMe.money -= amount; pTarget.money += amount; msg += `匯款了 $${amount} `; }
+            if(propId !== "none" && propUpdates[propId]?.ownerId === me.id) {
+               propUpdates[propId].ownerId = targetId;
+               msg += (amount>0?'並':'') + `轉讓了「${BOARD_SPACES[propId].name}」`;
+            }
+            if (amount === 0 && propId === "none") return;
+            
+            await updateGame({ players: pUpdates, properties: propUpdates, chat: appendLog(gameState.chat, msg + '！') });
+            showAlert(`交易成功發送給 ${pTarget.name}`); e.target.reset();
+         };
+
+         return (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4 backdrop-blur-md">
+               <div className="bg-white text-gray-900 p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
+                  <div className="flex justify-between items-center mb-4">
+                     <h2 className="text-3xl font-black text-gray-800">🌟 擴展中心</h2>
+                     <button onClick={()=>setShowExpansionModal(false)} className="text-3xl text-gray-500 hover:text-black">&times;</button>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mb-4 border-b pb-2">
+                     <button onClick={()=>setExpansionTab('stock')} className={`px-4 py-2 font-bold rounded ${expansionTab==='stock'?'bg-blue-600 text-white':'bg-gray-200 hover:bg-gray-300'}`}>📈 股市</button>
+                     <button onClick={()=>setExpansionTab('shop')} className={`px-4 py-2 font-bold rounded ${expansionTab==='shop'?'bg-green-600 text-white':'bg-gray-200 hover:bg-gray-300'}`}>🎒 商店</button>
+                     <button onClick={()=>setExpansionTab('bank')} className={`px-4 py-2 font-bold rounded ${expansionTab==='bank'?'bg-yellow-500 text-white':'bg-gray-200 hover:bg-gray-300'}`}>🏦 銀行</button>
+                     <button onClick={()=>setExpansionTab('casino')} className={`px-4 py-2 font-bold rounded ${expansionTab==='casino'?'bg-purple-600 text-white':'bg-gray-200 hover:bg-gray-300'}`}>🎰 賭場</button>
+                     <button onClick={()=>setExpansionTab('trade')} className={`px-4 py-2 font-bold rounded ${expansionTab==='trade'?'bg-orange-500 text-white':'bg-gray-200 hover:bg-gray-300'}`}>🤝 交易</button>
+                     <button onClick={()=>setExpansionTab('crime')} className={`px-4 py-2 font-bold rounded ${expansionTab==='crime'?'bg-red-700 text-white shadow-inner':'bg-gray-200 hover:bg-gray-300'}`}>🔪 黑市</button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-2 hide-scrollbar">
+                     {expansionTab === 'crime' && (
+                        <div className="space-y-4">
+                           <div className="border border-gray-800 p-6 rounded-xl bg-gray-900 text-gray-200 shadow-inner">
+                              <h3 className="text-2xl font-black text-red-500 mb-2">🔪 地下黑市</h3>
+                              <p className="text-sm text-gray-400 mb-6 font-bold">高風險，高回報。用金錢強制解決你的對手，改變戰局。</p>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                 <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 hover:border-red-500 transition">
+                                    <h4 className="font-bold text-lg text-red-400 mb-2">🚨 買凶入獄 ($500)</h4>
+                                    <p className="text-xs text-gray-400 mb-4 h-8">直接雇用地下勢力，將一名對手綁架並強制扔進監獄！</p>
+                                    <form onSubmit={async (e) => {
+                                       e.preventDefault();
+                                       const targetId = e.target.targetId.value;
+                                       if(!targetId) return showAlert("請選擇目標！");
+                                       let pUpdates = [...gameState.players];
+                                       let pMe = pUpdates.find(x => x.id === me.id);
+                                       let pTarget = pUpdates.find(x => x.id === targetId);
+                                       if (pMe.money < 500) return showAlert("資金不足以支付黑市費用！");
+                                       pMe.money -= 500;
+                                       pTarget.position = 10;
+                                       pTarget.inJail = true;
+                                       pTarget.jailTurns = 0;
+                                       await updateGame({ players: pUpdates, chat: appendLog(gameState.chat, `🔪 【黑市傳聞】有人暗中買凶，${pTarget.name} 在街頭遭到綁架，直接被扔進了監獄！`) });
+                                       showAlert(`成功買凶！${pTarget.name} 已經被送入監獄。`);
+                                       e.target.reset();
+                                    }} className="flex flex-col gap-2">
+                                       <select name="targetId" className="w-full p-2 bg-gray-700 border border-gray-600 rounded text-white font-bold outline-none">
+                                          <option value="">-- 選擇目標玩家 --</option>
+                                          {gameState.players.filter(p => p.id !== me.id && !p.isBankrupt).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                                       </select>
+                                       <button type="submit" className="w-full bg-red-600 text-white px-4 py-2 rounded font-bold hover:bg-red-700 transition">支付 $500 執行</button>
+                                    </form>
+                                 </div>
+                                 <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 hover:border-orange-500 transition">
+                                    <h4 className="font-bold text-lg text-orange-400 mb-2">🔥 縱火破壞 ($300)</h4>
+                                    <p className="text-xs text-gray-400 mb-4 h-8">指使混混摧毀對手土地上的一棟房屋，或將奇觀降級。</p>
+                                    <form onSubmit={async (e) => {
+                                       e.preventDefault();
+                                       const propId = e.target.propId.value;
+                                       if(!propId) return showAlert("請選擇目標土地！");
+                                       let pUpdates = [...gameState.players];
+                                       let pMe = pUpdates.find(x => x.id === me.id);
+                                       if (pMe.money < 300) return showAlert("資金不足以支付黑市費用！");
+                                       let propUpdates = { ...gameState.properties };
+                                       let targetProp = propUpdates[propId];
+                                       if (targetProp.isLandmark) { targetProp.isLandmark = false; targetProp.houses = 4; } 
+                                       else if (targetProp.houses > 0) { targetProp.houses -= 1; } 
+                                       else { return showAlert("這塊土地上已經沒有任何建築可以破壞了！"); }
+                                       pMe.money -= 300;
+                                       await updateGame({ players: pUpdates, properties: propUpdates, chat: appendLog(gameState.chat, `🔥 【突發火警】${BOARD_SPACES[propId].name} 遭到不明人士惡意縱火，損失了建築物！`) });
+                                       showAlert(`縱火成功！${BOARD_SPACES[propId].name} 的建築已遭到破壞。`);
+                                       e.target.reset();
+                                    }} className="flex flex-col gap-2">
+                                       <select name="propId" className="w-full p-2 bg-gray-700 border border-gray-600 rounded text-white font-bold outline-none">
+                                          <option value="">-- 選擇目標土地 --</option>
+                                          {Object.entries(gameState.properties).filter(([id, prop]) => prop.ownerId !== me.id && prop.ownerId && (prop.houses > 0 || prop.isLandmark)).map(([id, prop]) => <option key={id} value={id}>{BOARD_SPACES[id].name}</option>)}
+                                       </select>
+                                       <button type="submit" className="w-full bg-orange-600 text-white px-4 py-2 rounded font-bold hover:bg-orange-700 transition">支付 $300 執行</button>
+                                    </form>
+                                 </div>
+                              </div>
+                           </div>
+                        </div>
+                     )}
+                     {expansionTab === 'stock' && (
+                        <div className="space-y-6">
+                           <p className="text-sm text-gray-500 font-bold mb-2">💡 股票分紅：每次經過起點時，可獲得 (科技股+地產股) x $2 的現金紅利！</p>
+                           {['tech', 'realEstate'].map(st => {
+                              const hist = gameState.stocks.history[st];
+                              const maxP = Math.max(...hist, 200); const minP = Math.min(...hist, 0);
+                              const pts = hist.map((p, i) => `${(i / Math.max(1, hist.length-1)) * 300},${100 - ((p-minP)/(maxP-minP||1))*100}`).join(' ');
+                              return (
+                                 <div key={st} className="border rounded-xl p-4 bg-gray-50 flex gap-4 items-center shadow-sm">
+                                    <div className="flex-1">
+                                       <h4 className="text-xl font-bold">{st==='tech'?'💻 科技集團':'🏢 地產財團'}</h4>
+                                       <p className="text-3xl font-black text-blue-600">${gameState.stocks.prices[st]}</p>
+                                       <p className="text-sm text-gray-500">你持有: {me.stocksOwned[st]} 股</p>
+                                    </div>
+                                    <svg viewBox="0 -10 300 120" className="w-48 h-24 border-b border-l border-gray-300">
+                                       <polyline points={pts} fill="none" stroke={st==='tech'?'#3B82F6':'#10B981'} strokeWidth="3" vectorEffect="non-scaling-stroke" />
+                                    </svg>
+                                    <div className="flex flex-col gap-2">
+                                       <button onClick={()=>tradeStock(st, 10, true)} className="bg-blue-100 text-blue-700 px-4 py-2 rounded font-bold hover:bg-blue-200">買入 10股</button>
+                                       <button onClick={()=>tradeStock(st, 10, false)} className="bg-red-100 text-red-700 px-4 py-2 rounded font-bold hover:bg-red-200">賣出 10股</button>
+                                    </div>
+                                 </div>
+                              )
+                           })}
+                        </div>
+                     )}
+                     {expansionTab === 'shop' && (
+                        <div className="grid grid-cols-2 gap-4">
+                           <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 shadow-sm">
+                              <h4 className="text-lg font-bold">🛡️ 免租護盾 ($300)</h4><p className="text-xs text-gray-500 mb-2">踩到別人地盤可免除一次租金</p>
+                              <button onClick={async()=>{ if(me.money<300)return showAlert("資金不足"); let p=[...gameState.players]; p.find(x=>x.id===me.id).money-=300; p.find(x=>x.id===me.id).items.shield=(me.items?.shield||0)+1; await updateGame({players:p}); }} className="w-full bg-blue-600 text-white py-2 rounded font-bold">購買 (持有: {me.items?.shield||0})</button>
+                           </div>
+                           <div className="bg-green-50 p-4 rounded-xl border border-green-200 shadow-sm">
+                              <h4 className="text-lg font-bold">🐕 招財犬 ($800)</h4><p className="text-xs text-gray-500 mb-2">每次經過起點額外獲得 $300</p>
+                              <button onClick={async()=>{ if(me.money<800)return showAlert("資金不足"); let p=[...gameState.players]; p.find(x=>x.id===me.id).money-=800; p.find(x=>x.id===me.id).pet='dog'; await updateGame({players:p}); }} className="w-full bg-green-600 text-white py-2 rounded font-bold">{me.pet==='dog'?'已裝備':'購買裝備'}</button>
+                           </div>
+                        </div>
+                     )}
+                     {expansionTab === 'bank' && (
+                        <div className="space-y-4">
+                           <div className="border p-4 rounded-xl bg-yellow-50 flex justify-between items-center">
+                              <div><h4 className="text-lg font-bold text-yellow-800">🏦 銀行高利貸</h4><p className="text-sm text-gray-600">借款 $1000，負債 $1200</p><p className="font-bold text-red-600 mt-1">目前負債: ${me.debt}</p></div>
+                              <div className="flex flex-col gap-2">
+                                 <button onClick={()=>setModalConfig({show:true, msg:'確定要借款 $1000 嗎？', customRender: ()=><div className="mt-4 flex gap-2"><button onClick={async()=>{let p=[...gameState.players];let p1=p.find(x=>x.id===user.uid);p1.money+=1000;p1.debt+=1200;await updateGame({players:p});closeModal();}} className="flex-1 bg-red-600 text-white py-2 rounded font-bold">確定借款</button><button onClick={closeModal} className="flex-1 bg-gray-300 py-2 rounded font-bold">取消</button></div>})} className="bg-yellow-600 text-white px-4 py-2 rounded font-bold shadow">借款</button>
+                                 {me.debt > 0 && <button onClick={()=>setModalConfig({show:true, msg:`確定還款 $${me.debt}？`, customRender: ()=><div className="mt-4 flex gap-2"><button onClick={async()=>{let p=[...gameState.players];let p1=p.find(x=>x.id===user.uid);if(p1.money<p1.debt)return showAlert("資金不足");p1.money-=p1.debt;p1.debt=0;await updateGame({players:p});closeModal();}} className="flex-1 bg-green-600 text-white py-2 rounded font-bold">確定還款</button><button onClick={closeModal} className="flex-1 bg-gray-300 py-2 rounded font-bold">取消</button></div>})} className="bg-green-600 text-white px-4 py-2 rounded font-bold shadow">還款</button>}
+                              </div>
+                           </div>
+                           <div className="border p-4 rounded-xl bg-indigo-50 flex justify-between items-center">
+                              <div><h4 className="text-lg font-bold text-indigo-800">🎟️ 國家樂透</h4><p className="text-sm text-gray-600">目前獎池: ${gameState.lottery.pot} | 開獎: {gameState.lottery.roundsLeft} 輪後</p></div>
+                              <button onClick={async()=>{ if(me.money<50)return showAlert("需要 $50"); let p=[...gameState.players]; p.find(x=>x.id===user.uid).money-=50; await updateGame({players:p, lottery:{...gameState.lottery, pot:gameState.lottery.pot+50, tickets:[...gameState.lottery.tickets, user.uid]}}); }} className="bg-indigo-600 text-white px-4 py-2 rounded font-bold shadow">買彩券 ($50)</button>
+                           </div>
+                        </div>
+                     )}
+                     {expansionTab === 'casino' && (
+                        <div className="flex flex-col items-center justify-center p-8 bg-purple-50 rounded-xl border border-purple-200">
+                           <h3 className="text-3xl font-black text-purple-800 mb-2">🎰 皇家拉霸機</h3>
+                           <p className="text-purple-600 mb-6 font-bold">花費 $100 試試手氣！最高可贏 $1000！</p>
+                           <button onClick={spinCasino} className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-2xl font-black px-12 py-4 rounded-full shadow-lg hover:scale-105 transition transform">SPIN ($100)</button>
+                        </div>
+                     )}
+                     {expansionTab === 'trade' && (
+                        <div className="p-4 bg-orange-50 rounded-xl border border-orange-200">
+                           <h3 className="text-xl font-bold text-orange-800 mb-4">🤝 贈與及土地轉讓</h3>
+                           <form onSubmit={executeTrade} className="space-y-4">
+                              <div><label className="block text-sm font-bold text-gray-700">對象</label><select name="targetId" className="w-full p-2 border rounded font-bold bg-white"><option value="">選擇目標</option>{gameState.players.filter(p=>p.id!==me.id && !p.isBankrupt).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                              <div><label className="block text-sm font-bold text-gray-700">現金 ($)</label><input type="number" name="amount" min="0" max={me.money} defaultValue="0" className="w-full p-2 border rounded font-bold bg-white" /></div>
+                              <div><label className="block text-sm font-bold text-gray-700">土地</label><select name="propId" className="w-full p-2 border rounded font-bold bg-white"><option value="none">-- 不轉讓 --</option>{Object.entries(gameState.properties).filter(([_, prop])=>prop.ownerId===me.id).map(([id, prop]) => <option key={id} value={id}>{BOARD_SPACES[id].name}</option>)}</select></div>
+                              <button type="submit" className="w-full bg-orange-500 text-white py-3 rounded font-bold hover:bg-orange-600">確定交易</button>
+                           </form>
+                        </div>
+                     )}
+                  </div>
+               </div>
+            </div>
+         );
+      };
+
+      if (fbInitError) return <div className="min-h-screen bg-white flex items-center justify-center text-red-500 font-bold p-8 text-xl">Firebase Error: {fbInitError}</div>;
+      if (!user) return <div className="min-h-screen bg-white flex items-center justify-center font-bold text-3xl text-gray-800 animate-pulse">連線中...</div>;
+      
+      if (!roomId) return (
+         <div className="min-h-screen flex items-center justify-center p-4 bg-gray-100 bg-stripes">
+            <div className="bg-white p-8 rounded-3xl w-full max-w-md text-center shadow-2xl border border-gray-200">
+              <h1 className="text-4xl font-black mb-2 text-blue-700 tracking-tight">終極大富翁</h1><p className="text-gray-500 font-bold mb-8">黑市犯罪版 🔪</p>
+              <div className="space-y-4 mb-8">
+                 <input type="text" placeholder="你的暱稱" value={playerName} onChange={e=>setPlayerName(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 font-bold text-center text-lg" />
+                 <div className="flex flex-wrap gap-2 justify-center">{AVATARS.map(emoji=><button key={emoji} onClick={()=>setPlayerAvatar(emoji)} className={`text-3xl p-2 rounded-xl transition ${playerAvatar===emoji?'bg-blue-100 scale-110 shadow-sm':''}`}>{emoji}</button>)}</div>
+                 <select value={selectedTalent} onChange={e=>setSelectedTalent(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 font-bold">{TALENTS.map(t => <option key={t.id} value={t.id}>{t.name} - {t.desc}</option>)}</select>
+              </div>
+              <button onClick={()=>{if(playerName)setRoomId(Math.random().toString(36).substring(2,6).toUpperCase())}} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 mb-4 shadow-md transition">創建新房間</button>
+              <div className="flex gap-2"><input type="text" placeholder="房間代碼" value={inputRoomCode} onChange={e=>setInputRoomCode(e.target.value.toUpperCase())} maxLength={6} className="flex-1 px-4 rounded-xl bg-gray-50 border border-gray-200 font-bold uppercase text-center" /><button onClick={()=>{if(playerName&&inputRoomCode)setRoomId(inputRoomCode)}} className="bg-gray-200 text-gray-800 px-6 py-3 rounded-xl font-bold hover:bg-gray-300 transition">加入</button></div>
+            </div>
+         </div>
+      );
+
+      if (!gameState) return <div className="min-h-screen bg-gray-100 flex items-center justify-center text-gray-500 font-bold animate-pulse">載入房間中...</div>;
+
+      const currentPlayer = gameState.players[gameState.turnIndex];
+      const isMyTurn = currentPlayer?.id === user.uid && !currentPlayer.isBankrupt;
+      const myPlayerData = gameState.players.find(p => p.id === user.uid);
+
+      if (gameState.status === 'lobby') return (
+         <div className="min-h-screen flex items-center justify-center p-4 bg-gray-100">
+            <div className="bg-white p-8 rounded-3xl w-full max-w-md text-center shadow-xl border border-gray-200">
+              <h2 className="text-2xl font-bold text-gray-500 mb-2">準備大廳</h2><div className="text-5xl font-black text-blue-600 tracking-widest mb-8">{roomId}</div>
+              <ul className="mb-8 space-y-3">{gameState.players.map((p,i) => <li key={p.id} className="text-left font-bold text-lg p-3 bg-gray-50 rounded-xl flex items-center gap-3 border" style={{borderColor: p.color}}><span className="text-2xl">{p.avatar}</span> {p.name} <span className="text-xs text-gray-400 ml-auto">{TALENTS.find(t=>t.id===p.talent)?.name}</span></li>)}</ul>
+              {!myPlayerData ? <button onClick={joinGameSlot} className="w-full bg-green-500 text-white py-4 rounded-xl font-black text-lg shadow-lg hover:bg-green-600 transition">加入遊戲</button> : (gameState.players[0].id===user.uid ? <button onClick={()=>updateGame({status:'playing', turnStartTime:Date.now()})} className="w-full bg-blue-600 text-white py-4 rounded-xl font-black text-lg shadow-lg hover:bg-blue-700 transition">開始遊戲</button> : <p className="text-gray-500 font-bold animate-pulse">等待房主開始...</p>)}
+            </div>
+         </div>
+      );
+
+      return (
+        <div className="min-h-screen p-2 md:p-4 flex flex-col gap-4 max-w-[1200px] mx-auto bg-white">
+          
+          {/* 棋盤區域置頂 */}
+          <div className="w-full bg-gray-100 p-3 rounded-2xl shadow-inner aspect-square max-h-[80vh] mx-auto relative border border-gray-300">
+            <div className="w-full h-full grid grid-cols-11 grid-rows-11 gap-[2px] bg-gray-300">
+              {BOARD_SPACES.map((space, index) => {
+                let row, col;
+                if (index <= 10) { row = 11; col = 11 - index; } else if (index <= 20) { col = 1; row = 11 - (index - 10); } else if (index <= 30) { row = 1; col = index - 19; } else { col = 11; row = index - 29; }
+                const propData = gameState.properties[space.id];
+                const owner = propData?.ownerId ? gameState.players.find(p => p.id === propData.ownerId) : null;
+                // 使用視覺位置狀態來渲染棋子
+                const playersOnSpace = gameState.players.filter(p => (visualPos[p.id] ?? p.position) === space.id && !p.isBankrupt);
+                const bgStyle = owner ? { backgroundColor: HEX_TO_RGBA(owner.color, 0.15) } : { backgroundColor: '#ffffff' };
+                const isMonopoly = owner && BOARD_SPACES.filter(s => s.color === space.color).every(s => gameState.properties[s.id]?.ownerId === owner.id);
+
+                return (
+                  <div key={space.id} onClick={()=>setSelectedSpaceId(space.id)} className={`flex flex-col items-center justify-between text-[0.6rem] font-bold text-center relative overflow-hidden cursor-pointer hover:brightness-95 transition ${isMonopoly?'ring-inset ring-2 ring-yellow-400':''}`} style={{ gridRow: row, gridColumn: col, ...bgStyle }}>
+                    {space.color && <div className="w-full h-3 md:h-4 shadow-sm" style={{ backgroundColor: COLOR_MAP[space.color] }}></div>}
+                    <div className="flex-grow flex flex-col items-center justify-center w-full px-0.5 z-0 leading-tight text-gray-800">
+                       <span>{space.name}</span>
+                       {propData?.isLandmark && <span className="text-lg mt-0.5">🏰</span>}
+                    </div>
+                    {owner && (
+                      <div className="absolute bottom-0 w-full h-2 flex items-center justify-center gap-[2px]" style={{ backgroundColor: owner.color }}>
+                         {!propData.isLandmark && propData.houses > 0 && Array(propData.houses).fill(0).map((_,i) => <div key={i} className="w-1.5 h-1.5 bg-white rounded-full"></div>)}
+                      </div>
+                    )}
+                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex flex-wrap justify-center gap-[1px] z-10 text-base md:text-xl player-token w-full pointer-events-none">
+                        {playersOnSpace.map(p => <span key={p.id}>{p.avatar}</span>)}
+                        {gameState.boss?.active && gameState.boss.position === space.id && <span className="boss-token relative group">{gameState.boss.avatar}<span className="absolute -top-4 left-1/2 -translate-x-1/2 text-[10px] bg-red-600 text-white px-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition">HP: {gameState.boss.hp}</span></span>}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* 棋盤中央區域 */}
+              <div className="row-start-2 row-end-11 col-start-2 col-end-11 bg-gray-50 p-4 flex flex-col items-center justify-center relative rounded-xl m-1 shadow-inner border border-gray-200">
+                 <div className="absolute top-4 flex flex-col items-center">
+                    <div className="text-sm font-bold text-gray-400 tracking-widest">WORLD EVENT</div>
+                    <div className="text-2xl font-black text-gray-800 bg-white px-4 py-1 rounded-full shadow border border-gray-100">{gameState.worldEvent.name}</div>
+                 </div>
+
+                 <div className="w-full max-w-xs bg-white rounded-2xl p-6 shadow-xl border border-gray-100 flex flex-col items-center transform transition duration-500 hover:scale-105">
+                    <div className="text-sm font-bold text-gray-400 mb-1">CURRENT TURN</div>
+                    <div className="text-4xl mb-2">{currentPlayer?.avatar}</div>
+                    <h3 className="text-2xl font-black text-gray-800" style={{color: currentPlayer?.color}}>{currentPlayer?.name}</h3>
+                    
+                    <div className="mt-6 flex flex-col w-full gap-3">
+                      {isMyTurn && gameState.phase === 'waiting_roll' && <button onClick={rollDice} className="w-full bg-blue-600 text-white py-3 rounded-xl font-black text-lg hover:bg-blue-700 shadow-lg">🎲 擲骰子 ({timeLeft}s)</button>}
+                      
+                      {isMyTurn && gameState.phase === 'must_action' && gameState.pendingAction?.type === 'buy' && (
+                         <div className="flex gap-2">
+                           <button onClick={buyProperty} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-black hover:bg-green-700">購買 (${gameState.pendingAction.amount})</button>
+                           <button onClick={startAuction} className="flex-1 bg-yellow-500 text-white py-3 rounded-xl font-black hover:bg-yellow-600">放棄/拍賣</button>
+                         </div>
+                      )}
+                      
+                      {isMyTurn && gameState.phase === 'must_action' && ['rent', 'tax'].includes(gameState.pendingAction?.type) && (
+                         <div className="flex flex-col gap-2">
+                            <button onClick={payRentOrTax} className="w-full bg-red-600 text-white py-3 rounded-xl font-black hover:bg-red-700">支付 ${gameState.pendingAction.amount}</button>
+                            {gameState.pendingAction.type === 'rent' && (myPlayerData?.items?.shield > 0) && (
+                               <button onClick={useShield} className="w-full bg-indigo-600 text-white py-2 rounded-xl font-bold hover:bg-indigo-700">🛡️ 使用免租護盾 (餘: {myPlayerData.items.shield})</button>
+                            )}
+                         </div>
+                      )}
+
+                      {isMyTurn && gameState.phase === 'must_action' && gameState.pendingAction?.type === 'boss_encounter' && (
+                         <div className="flex flex-col gap-2 animate-pulse">
+                            <div className="text-center font-bold text-red-600 mb-2">遇見 {gameState.boss.name} (HP: {gameState.boss.hp})</div>
+                            <button onClick={attackBoss} className="w-full bg-red-600 text-white py-3 rounded-xl font-black hover:bg-red-700">⚔️ 攻擊 ($100)</button>
+                            <button onClick={async()=>await updateGame({phase:'end_turn', pendingAction:null, chat: appendLog(gameState.chat, `🏃 ${myPlayerData.name} 選擇不攻擊 Boss，直接逃離了。`)})} className="w-full bg-gray-500 text-white py-2 rounded-xl font-black hover:bg-gray-600">🏃 逃離</button>
+                         </div>
+                      )}
+
+                      {isMyTurn && gameState.phase === 'end_turn' && <button onClick={forceEndTurn} className="w-full bg-gray-800 text-white py-3 rounded-xl font-black hover:bg-gray-700 shadow-md">結束回合 ({timeLeft}s)</button>}
+                      
+                      {!isMyTurn && gameState.phase !== 'auction' && <div className="text-gray-400 font-bold text-center bg-gray-50 py-3 rounded-xl">等待動作中... ({timeLeft}s)</div>}
+                    </div>
+                 </div>
+
+                 {gameState.auction?.active && (
+                    <div className="absolute bottom-4 w-full px-8">
+                       <div className="bg-yellow-100 border-2 border-yellow-400 rounded-xl p-4 shadow-2xl animate-pulse">
+                          <h4 className="font-black text-yellow-800 text-center mb-2">🔨 土地拍賣中 ({timeLeft}s)</h4>
+                          <div className="flex justify-between items-center mb-4 text-sm font-bold">
+                             <span>標的: {BOARD_SPACES[gameState.auction.spaceId].name}</span>
+                             <span className="text-lg text-red-600">最高價: ${gameState.auction.currentBid}</span>
+                          </div>
+                          <div className="flex gap-2 justify-center">
+                             <button onClick={()=>bidAuction(10)} className="bg-white border border-yellow-500 text-yellow-700 px-4 py-2 rounded font-bold hover:bg-yellow-50">+10</button>
+                             <button onClick={()=>bidAuction(50)} className="bg-white border border-yellow-500 text-yellow-700 px-4 py-2 rounded font-bold hover:bg-yellow-50">+50</button>
+                             <button onClick={()=>bidAuction(100)} className="bg-white border border-yellow-500 text-yellow-700 px-4 py-2 rounded font-bold hover:bg-yellow-50">+100</button>
+                          </div>
+                       </div>
+                    </div>
+                 )}
+              </div>
+            </div>
+          </div>
+
+          {/* 底部控制與狀態區域 */}
+          <div className="flex flex-col md:flex-row gap-4 w-full">
+            <div className="flex-1 flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-3">
+                 <button onClick={() => setShowExpansionModal(true)} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-2xl font-black text-lg shadow-lg hover:shadow-xl hover:-translate-y-1 transition duration-300">🌟 擴展中心 (交易/黑市)</button>
+                 {myPlayerData && <button onClick={()=>setModalConfig({show:true, msg:'確定要宣告破產嗎？所有資產將會釋出。', customRender: ()=><div className="mt-4 flex gap-2"><button onClick={()=>{declareBankruptcy(); closeModal();}} className="flex-1 bg-red-600 text-white py-2 rounded font-bold">確定破產</button><button onClick={closeModal} className="flex-1 bg-gray-300 py-2 rounded font-bold">取消</button></div>})} className="bg-white border-2 border-red-100 text-red-600 py-4 rounded-2xl font-black text-lg shadow-sm hover:bg-red-50 transition">🏳️ 宣告破產</button>}
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 flex-1 overflow-hidden flex flex-col">
+                <div className="bg-gray-50 p-4 border-b flex justify-between items-center">
+                   <h2 className="text-lg font-black text-gray-800">玩家狀態 (第 {gameState.roundCount} 輪)</h2>
+                   <span className="text-sm font-bold text-gray-400">點擊地圖方塊查看詳細資訊</span>
+                </div>
+                <div className="p-2 space-y-2 overflow-y-auto hide-scrollbar max-h-60">
+                  {gameState.players.map((p, i) => (
+                     <div key={p.id} className={`p-4 rounded-xl border flex flex-col gap-2 transition duration-300 ${p.isBankrupt?'opacity-40 grayscale':''} ${i === gameState.turnIndex ? 'shadow-md scale-[1.02] bg-gray-50' : 'bg-white'}`} style={{borderColor: i===gameState.turnIndex ? p.color : '#f3f4f6'}}>
+                       <div className="flex justify-between items-center">
+                         <span className="font-black text-lg flex items-center gap-2">
+                            <span className="text-2xl">{p.avatar}</span> {p.name} 
+                            {i === gameState.turnIndex && <span className="text-[10px] bg-black text-white px-2 py-0.5 rounded-full ml-1 animate-pulse">回合中</span>}
+                            {p.pet === 'dog' && <span className="text-sm ml-1" title="招財犬">🐕</span>}
+                            {p.items?.shield > 0 && <span className="text-sm ml-1 text-blue-500" title="免租護盾">🛡️x{p.items.shield}</span>}
+                         </span>
+                         <span className="font-black text-green-600 text-xl tracking-tight">💰 {p.money}</span>
+                       </div>
+                       <div className="flex gap-2 text-xs text-gray-500 font-bold items-center flex-wrap">
+                          <span className="bg-gray-100 px-2 py-1 rounded">資產: {Object.values(gameState.properties).filter(x=>x.ownerId===p.id).length}</span>
+                          <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded">科技: {p.stocksOwned?.tech||0}</span>
+                          <span className="bg-green-50 text-green-700 px-2 py-1 rounded">地產: {p.stocksOwned?.realEstate||0}</span>
+                          {p.debt > 0 && <span className="bg-red-50 text-red-600 px-2 py-1 rounded">負債: ${p.debt}</span>}
+                       </div>
+                     </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex-1 bg-white rounded-2xl h-64 md:h-auto flex flex-col shadow-sm border border-gray-100 p-3">
+               <div className="flex-1 overflow-y-auto text-sm space-y-2 hide-scrollbar mb-2 font-medium bg-gray-50/50 p-2 rounded-xl">
+                  {gameState.chat.map(msg=>(
+                     <div key={msg.id} className={`${msg.isSystem ? 'bg-blue-50 text-blue-800 border-l-2 border-blue-400 px-2 py-1.5 rounded-r shadow-sm font-bold' : 'text-gray-600'}`}>
+                        <span className={msg.isSystem ? "hidden" : "text-gray-900 font-black mr-1"}>{msg.sender}:</span>
+                        {msg.text}
+                     </div>
+                  ))}
+                  <div ref={chatEndRef}/>
+               </div>
+               <form onSubmit={e=>{e.preventDefault();const input=e.target.elements[0].value; if(!input.trim())return; updateGame({chat:[...gameState.chat,{id:Date.now(),sender:myPlayerData?.name||'觀戰',text:input, isSystem:false}].slice(-50)}); e.target.reset();}} className="flex gap-2">
+                  <input className="flex-1 bg-gray-50 border border-gray-200 text-gray-800 px-3 py-2 rounded-xl text-sm focus:outline-none focus:border-blue-400 transition" placeholder="輸入聊天訊息..." />
+                  <button className="bg-gray-800 text-white px-4 rounded-xl text-sm font-bold hover:bg-gray-700 transition">發送</button>
+               </form>
+            </div>
+          </div>
+
+          <PropertyModal />
+          {showExpansionModal && renderExpansionModal()}
+
+          {modalConfig.show && (
+             <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
+                <div className="bg-white p-8 rounded-2xl max-w-sm w-full text-center shadow-2xl">
+                   <p className="text-xl font-bold mb-6 text-gray-800">{modalConfig.msg}</p>
+                   {modalConfig.customRender ? modalConfig.customRender() : <button onClick={closeModal} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700">確定</button>}
+                </div>
+             </div>
+          )}
+        </div>
+      );
+    }
+    const root = ReactDOM.createRoot(document.getElementById('root')); root.render(<App />);
+  </script>
+</body>
+</html>
